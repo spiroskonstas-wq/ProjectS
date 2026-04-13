@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>🔐 AI Symbol Decoder</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="cvReady()" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; padding: 20px; background-color: #f0f2f5; max-width: 600px; margin: auto; text-align: center; }
+        section { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .symbol { display: inline-block; margin: 2px; }
+        button { background: #007bff; color: white; border: none; padding: 15px; border-radius: 10px; width: 100%; font-weight: bold; font-size: 16px; margin-top: 10px; cursor: pointer; }
+        button:disabled { background: #ccc; }
+        #fileInput { display: none; }
+        #status { padding: 10px; margin-top: 10px; border-radius: 5px; background: #e9ecef; font-size: 14px; }
+        #canvasOutput { width: 100%; margin-top: 10px; border-radius: 10px; border: 1px solid #ddd; display: none; }
+        textarea { width: 100%; margin-top: 10px; padding: 10px; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; }
+        h2 { color: #333; }
+    </style>
+</head>
+<body>
+
+<h2>🔐 AI Symbol Translator</h2>
+
+<section>
+    <h3>1. Create Secret Code</h3>
+    <input type="text" id="inputText" placeholder="Type a message..." oninput="encode()" style="width:100%; padding:10px; box-sizing:border-box; border-radius:5px; border:1px solid #ddd;">
+    <div id="output" style="margin: 15px 0; min-height: 40px;"></div>
+    <textarea id="shareableCode" readonly rows="2" placeholder="Digital code will appear here..."></textarea>
+</section>
+
+<section>
+    <h3>2. Photo Decoder</h3>
+    <p>Take a clear photo of your hand-drawn symbols.</p>
+    <button id="cameraBtn" disabled onclick="document.getElementById('fileInput').click()">📸 Take Photo to Decode</button>
+    <input type="file" id="fileInput" accept="image/*" capture="camera" onchange="processImage(this)">
+    <canvas id="canvasOutput"></canvas>
+    <div id="status">Loading AI Engine...</div>
+</section>
+
+<section>
+    <h3>3. Decoded Message</h3>
+    <div id="finalResult" style="font-size: 28px; color: #28a745; font-weight: bold; min-height: 40px;"></div>
+</section>
+
+<script>
+// --- CONFIG & SYMBOL MAP ---
+let cvLoaded = false;
+function cvReady() {
+    cvLoaded = true;
+    document.getElementById('status').innerText = "AI Engine Ready";
+    document.getElementById('cameraBtn').disabled = false;
+}
+
+// Logic Mapping for Squares: [Top, Right, Bottom, Left]
+const squareMap = {
+    "0,1,1,0": "A", "0,1,1,1": "B", "0,0,1,1": "C",
+    "1,1,1,0": "D", "1,1,1,1": "E", "1,0,1,1": "F",
+    "1,1,0,0": "G", "1,1,0,1": "H", "1,0,0,1": "I"
+};
+
+// --- DIGITAL ENCODER ---
+function squareSVG(t, r, b, l) {
+    return `<svg width="30" height="30" stroke="black" stroke-width="2" fill="none">
+        ${t ? '<line x1="2" y1="2" x2="28" y2="2"/>' : ''}
+        ${r ? '<line x1="28" y1="2" x2="28" y2="28"/>' : ''}
+        ${b ? '<line x1="2" y1="28" x2="28" y2="28"/>' : ''}
+        ${l ? '<line x1="2" y1="2" x2="2" y2="28"/>' : ''}
+    </svg>`;
+}
+
+function encode() {
+    let val = document.getElementById("inputText").value.toUpperCase();
+    let vis = ""; let raw = "";
+    const syms = { A:[0,1,1,0], B:[0,1,1,1], C:[0,0,1,1], D:[1,1,1,0], E:[1,1,1,1], F:[1,0,1,1], G:[1,1,0,0], H:[1,1,0,1], I:[1,0,0,1] };
+    for (let c of val) {
+        if (syms[c]) { vis += `<span class="symbol">${squareSVG(...syms[c])}</span>`; raw += c; }
+        else { vis += c; raw += c; }
+    }
+    document.getElementById("output").innerHTML = vis;
+    document.getElementById("shareableCode").value = btoa(raw);
+}
+
+// --- COMPUTER VISION DECODER ---
+async function processImage(input) {
+    if (!input.files || !input.files[0]) return;
+    const status = document.getElementById("status");
+    status.innerText = "Processing image...";
+
+    const img = new Image();
+    img.src = URL.createObjectURL(input.files[0]);
+    
+    img.onload = function() {
+        let src = cv.imread(img);
+        let gray = new cv.Mat();
+        let thresh = new cv.Mat();
+        
+        // Pre-process: Grayscale and high-contrast Black/White
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+        cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+        
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        
+        let detectedSymbols = [];
+
+        for (let i = 0; i < contours.size(); ++i) {
+            let cnt = contours.get(i);
+            let rect = cv.boundingRect(cnt);
+            
+            // Filter by size (ignore tiny noise or massive page borders)
+            if (rect.width > 20 && rect.height > 20) {
+                let approx = new cv.Mat();
+                cv.approxPolyDP(cnt, approx, 0.04 * cv.arcLength(cnt, true), true);
+                
+                if (approx.rows === 4) { // It's a square
+                    // Analyze lines by checking pixel density at edges
+                    let roi = thresh.roi(rect);
+                    let lines = checkLines(roi);
+                    let letter = squareMap[lines.join(',')] || "?";
+                    
+                    detectedSymbols.push({ x: rect.x, char: letter });
+                    
+                    // Draw box on canvas for feedback
+                    let point1 = new cv.Point(rect.x, rect.y);
+                    let point2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
+                    cv.rectangle(src, point1, point2, [0, 255, 0, 255], 2);
+                    roi.delete();
+                }
+                approx.delete();
+            }
+        }
+
+        // Sort symbols left-to-right
+        detectedSymbols.sort((a, b) => a.x - b.x);
+        let resultString = detectedSymbols.map(s => s.char).join("");
+
+        // Show result
+        document.getElementById("finalResult").innerText = resultString;
+        document.getElementById("canvasOutput").style.display = "block";
+        cv.imshow('canvasOutput', src);
+        status.innerText = `Found ${detectedSymbols.length} symbols.`;
+
+        // Cleanup
+        src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    };
+}
+
+function checkLines(roi) {
+    // Splits the detected square into 4 edge zones and checks if they are "inked"
+    const w = roi.cols;
+    const h = roi.rows;
+    const sample = 5; // pixels from edge
+
+    const hasLine = (rect) => {
+        let zone = roi.roi(rect);
+        let whitePixels = cv.countNonZero(zone);
+        zone.delete();
+        return (whitePixels > (rect.width * rect.height) * 0.3) ? 1 : 0;
+    };
+
+    return [
+        hasLine({x: 5, y: 0, width: w-10, height: sample}), // Top
+        hasLine({x: w-sample, y: 5, width: sample, height: h-10}), // Right
+        hasLine({x: 5, y: h-sample, width: w-10, height: sample}), // Bottom
+        hasLine({x: 0, y: 5, width: sample, height: h-10})  // Left
+    ];
+}
+</script>
+</body>
+</html>
