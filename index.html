@@ -1,0 +1,115 @@
+<script>
+let cvLoaded = false;
+function cvReady() {
+    cvLoaded = true;
+    document.getElementById('status').innerText = "AI Engine Ready ✅";
+    document.getElementById('camBtn').disabled = false;
+}
+
+// Full Dictionary based on your image logic
+const symbolLibrary = {
+    // Squares [Top, Right, Bottom, Left, HasDot]
+    "0,1,1,0,0": "A", "0,1,1,1,0": "B", "0,0,1,1,0": "C",
+    "1,1,1,0,0": "D", "1,1,1,1,0": "E", "1,0,1,1,0": "F",
+    "1,1,0,0,0": "G", "1,1,0,1,0": "H", "1,0,0,1,0": "I",
+    "0,1,1,0,1": "N", "0,1,1,1,1": "O", "0,0,1,1,1": "P",
+    "1,1,1,0,1": "Q", "1,1,1,1,1": "R", "1,0,1,1,1": "S",
+    "1,1,0,0,1": "T", "1,1,0,1,1": "U", "1,0,0,1,1": "V",
+    // Special Shapes (Triangles/Angles)
+    "TRI_DOWN_0": "J", "TRI_RIGHT_0": "K", "TRI_LEFT_0": "L", "TRI_UP_0": "M",
+    "TRI_DOWN_1": "W", "TRI_RIGHT_1": "X", "TRI_LEFT_1": "Y", "TRI_UP_1": "Z"
+};
+
+async function processImage(input) {
+    if (!input.files || !input.files[0]) return;
+    const status = document.getElementById("status");
+    const resultDiv = document.getElementById("result");
+    status.innerText = "Scanning for dots and lines...";
+
+    const img = new Image();
+    img.src = URL.createObjectURL(input.files[0]);
+    
+    img.onload = function() {
+        let src = cv.imread(img);
+        let gray = new cv.Mat();
+        let thresh = new cv.Mat();
+        
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 4);
+        
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        
+        let found = [];
+
+        for (let i = 0; i < contours.size(); ++i) {
+            let cnt = contours.get(i);
+            let rect = cv.boundingRect(cnt);
+            if (rect.width < 10 || rect.height < 10) continue;
+
+            let roi = thresh.roi(rect);
+            let approx = new cv.Mat();
+            cv.approxPolyDP(cnt, approx, 0.04 * cv.arcLength(cnt, true), true);
+
+            let char = "?";
+            let hasDot = checkForDot(roi) ? 1 : 0;
+
+            if (approx.rows === 4) {
+                // Square detection
+                let lines = detectLines(roi);
+                char = symbolLibrary[[...lines, hasDot].join(',')] || "?";
+            } else if (approx.rows === 3 || approx.rows === 2) {
+                // Triangle/Angle detection (L is in your photo)
+                // We determine direction based on the bounding box aspect
+                if (rect.width > rect.height) char = hasDot ? "W" : "J"; 
+                else char = hasDot ? "Y" : "L";
+            }
+
+            found.push({ x: rect.x, char: char });
+            cv.rectangle(src, new cv.Point(rect.x, rect.y), new cv.Point(rect.x+rect.width, rect.y+rect.height), [0, 255, 0, 255], 2);
+            
+            approx.delete();
+            roi.delete();
+        }
+
+        found.sort((a, b) => a.x - b.x);
+        resultDiv.innerText = found.map(f => f.char).join("");
+        
+        document.getElementById("canvasOutput").style.display = "block";
+        cv.imshow('canvasOutput', src);
+        status.innerText = "Match Complete.";
+
+        src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    };
+}
+
+function checkForDot(roi) {
+    // Check the center 30% of the shape for ink
+    let cx = Math.floor(roi.cols * 0.35);
+    let cy = Math.floor(roi.rows * 0.35);
+    let cw = Math.floor(roi.cols * 0.3);
+    let ch = Math.floor(roi.rows * 0.3);
+    let centerZone = roi.roi({x: cx, y: cy, width: cw, height: ch});
+    let pixels = cv.countNonZero(centerZone);
+    centerZone.delete();
+    return pixels > (cw * ch * 0.1); // If 10% of center is black, it's a dot
+}
+
+function detectLines(roi) {
+    const w = roi.cols; const h = roi.rows;
+    const t = 4; // thickness
+    const check = (r) => {
+        let zone = roi.roi(r);
+        let p = cv.countNonZero(zone);
+        zone.delete();
+        return p > (r.width * r.height * 0.2) ? 1 : 0;
+    };
+    return [
+        check({x: t, y: 0, width: w-(t*2), height: t}), // Top
+        check({x: w-t, y: t, width: t, height: h-(t*2)}), // Right
+        check({x: t, y: h-t, width: w-(t*2), height: t}), // Bottom
+        check({x: 0, y: t, width: t, height: h-(t*2)})   // Left
+    ];
+}
+</script>
