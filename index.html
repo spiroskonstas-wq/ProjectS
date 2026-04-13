@@ -1,0 +1,112 @@
+<script>
+let cvLoaded = false;
+function cvReady() {
+    cvLoaded = true;
+    document.getElementById('status').innerText = "AI Engine Ready ✅";
+    document.getElementById('camBtn').disabled = false;
+}
+
+// Strictly matching your original HTML logic + dots
+const symbolLibrary = {
+    // Top, Right, Bottom, Left, Dot
+    "0,1,1,0,0": "A", "0,1,1,1,0": "B", "0,0,1,1,0": "C",
+    "1,1,1,0,0": "D", "1,1,1,1,0": "E", "1,0,1,1,0": "F",
+    "1,1,0,0,0": "G", "1,1,0,1,0": "H", "1,0,0,1,0": "I",
+    "0,1,1,0,1": "N", "0,1,1,1,1": "O", "0,0,1,1,1": "P",
+    "1,1,1,0,1": "Q", "1,1,1,1,1": "R", "1,0,1,1,1": "S",
+    "1,1,0,0,1": "T", "1,1,0,1,1": "U", "1,0,0,1,1": "V"
+};
+
+async function processImage(input) {
+    if (!input.files || !input.files[0]) return;
+    const status = document.getElementById("status");
+    const resultDiv = document.getElementById("result");
+    status.innerText = "Processing...";
+
+    const img = new Image();
+    img.src = URL.createObjectURL(input.files[0]);
+    
+    img.onload = function() {
+        let src = cv.imread(img);
+        let gray = new cv.Mat();
+        let thresh = new cv.Mat();
+        
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        // Using a fixed threshold often works better for clean digital pics like yours
+        cv.threshold(gray, thresh, 150, 255, cv.THRESH_BINARY_INV);
+        
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        
+        let found = [];
+
+        for (let i = 0; i < contours.size(); ++i) {
+            let cnt = contours.get(i);
+            let rect = cv.boundingRect(cnt);
+            
+            // IGNORE NOISE: Only process shapes that look like your symbols
+            if (rect.width > 20 && rect.height > 20 && rect.width < src.cols * 0.8) {
+                let roi = thresh.roi(rect);
+                
+                let hasDot = checkForDot(roi);
+                let lines = detectLines(roi);
+                let key = [...lines, (hasDot ? 1 : 0)].join(',');
+                
+                let char = symbolLibrary[key] || "?";
+
+                // Handle Triangles/Angles (Like L and Y in your photo)
+                if (char === "?") {
+                    if (rect.width > rect.height * 1.2) char = hasDot ? "W" : "J";
+                    else if (rect.height > rect.width * 1.2) char = hasDot ? "Y" : "L";
+                }
+
+                found.push({ x: rect.x, char: char });
+                cv.rectangle(src, new cv.Point(rect.x, rect.y), new cv.Point(rect.x+rect.width, rect.y+rect.height), [0, 255, 0, 255], 2);
+                roi.delete();
+            }
+        }
+
+        found.sort((a, b) => a.x - b.x);
+        resultDiv.innerText = found.map(f => f.char).join("");
+        
+        document.getElementById("canvasOutput").style.display = "block";
+        cv.imshow('canvasOutput', src);
+        status.innerText = "Scan Complete.";
+
+        src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    };
+}
+
+function checkForDot(roi) {
+    // Look at the very center of the symbol
+    let cx = Math.floor(roi.cols * 0.4);
+    let cy = Math.floor(roi.rows * 0.4);
+    let cw = Math.floor(roi.cols * 0.2);
+    let ch = Math.floor(roi.rows * 0.2);
+    let centerZone = roi.roi({x: cx, y: cy, width: cw, height: ch});
+    let whitePixels = cv.countNonZero(centerZone);
+    centerZone.delete();
+    return whitePixels > (cw * ch * 0.2);
+}
+
+function detectLines(roi) {
+    const w = roi.cols; const h = roi.rows;
+    const t = Math.max(2, Math.floor(w * 0.1)); // Dynamic thickness
+    
+    const check = (r) => {
+        let zone = roi.roi(r);
+        let p = cv.countNonZero(zone);
+        zone.delete();
+        // A line must occupy at least 40% of its zone to be "ON"
+        return (p > (r.width * r.height * 0.4)) ? 1 : 0;
+    };
+
+    return [
+        check({x: t, y: 0, width: w-(t*2), height: t}), // Top
+        check({x: w-t, y: t, width: t, height: h-(t*2)}), // Right
+        check({x: t, y: h-t, width: w-(t*2), height: t}), // Bottom
+        check({x: 0, y: t, width: t, height: h-(t*2)})   // Left
+    ];
+}
+</script>
