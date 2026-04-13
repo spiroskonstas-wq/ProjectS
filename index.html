@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>🔐 AI Symbol Translator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="cvReady()" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; padding: 15px; background: #f4f7f9; max-width: 500px; margin: auto; text-align: center; }
+        section { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 15px; }
+        button { background: #007bff; color: white; border: none; padding: 15px; border-radius: 8px; width: 100%; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #canvasOutput { width: 100%; border-radius: 8px; margin-top: 10px; display: none; border: 1px solid #ddd; }
+        .status { font-size: 14px; color: #666; margin-top: 8px; font-style: italic; }
+        #result { font-size: 32px; color: #28a745; font-weight: bold; margin-top: 15px; letter-spacing: 2px; }
+        .symbol-preview { display: inline-block; margin: 2px; }
+    </style>
+</head>
+<body>
+
+<h2>🔐 Symbol AI Decoder</h2>
+
+<section>
+    <h3>Step 1: Digital Preview</h3>
+    <input type="text" id="inputText" placeholder="Type to see symbols..." oninput="encode()" style="width:100%; padding:10px; box-sizing:border-box;">
+    <div id="output" style="margin-top:10px; min-height: 40px;"></div>
+</section>
+
+<section>
+    <h3>Step 2: Decode from Photo</h3>
+    <div id="status">Loading AI Vision Engine...</div>
+    <button id="camBtn" disabled onclick="document.getElementById('fileInput').click()">📸 Take Photo of Symbols</button>
+    <input type="file" id="fileInput" accept="image/*" capture="camera" style="display:none" onchange="processImage(this)">
+    
+    <canvas id="canvasOutput"></canvas>
+    <div id="result"></div>
+</section>
+
+<script>
+// --- CONFIG & MAPPING ---
+let cvLoaded = false;
+function cvReady() {
+    cvLoaded = true;
+    document.getElementById('status').innerText = "AI Engine Ready ✅";
+    document.getElementById('camBtn').disabled = false;
+}
+
+// Logic: [Top, Right, Bottom, Left]
+const squareMap = {
+    "0,1,1,0": "A", "0,1,1,1": "B", "0,0,1,1": "C",
+    "1,1,1,0": "D", "1,1,1,1": "E", "1,0,1,1": "F",
+    "1,1,0,0": "G", "1,1,0,1": "H", "1,0,0,1": "I"
+    // Add more mappings here following your HTML logic
+};
+
+// --- ENCODER (For testing) ---
+function encode() {
+    const val = document.getElementById("inputText").value.toUpperCase();
+    let vis = "";
+    const map = {A:[0,1,1,0],B:[0,1,1,1],C:[0,0,1,1],D:[1,1,1,0],E:[1,1,1,1],F:[1,0,1,1],G:[1,1,0,0],H:[1,1,0,1],I:[1,0,0,1]};
+    for (let c of val) {
+        if (map[c]) vis += `<span class="symbol-preview">${drawSVG(...map[c])}</span>`;
+        else vis += c;
+    }
+    document.getElementById("output").innerHTML = vis;
+}
+
+function drawSVG(t,r,b,l) {
+    return `<svg width="30" height="30" stroke="black" stroke-width="2" fill="none">
+        ${t?'<line x1="2" y1="2" x2="28" y2="2"/>':''}${r?'<line x1="28" y1="2" x2="28" y2="28"/>':''}${b?'<line x1="2" y1="28" x2="28" y2="28"/>':''}${l?'<line x1="2" y1="2" x2="2" y2="28"/>':''}
+    </svg>`;
+}
+
+// --- DECODER ENGINE ---
+async function processImage(input) {
+    if (!input.files || !input.files[0]) return;
+    const status = document.getElementById("status");
+    const resultDiv = document.getElementById("result");
+    status.innerText = "Analyzing pixels...";
+
+    const img = new Image();
+    img.src = URL.createObjectURL(input.files[0]);
+    
+    img.onload = function() {
+        let src = cv.imread(img);
+        let gray = new cv.Mat();
+        let thresh = new cv.Mat();
+        
+        // 1. Convert to Black and White
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+        
+        // 2. Find Shapes
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        
+        let found = [];
+
+        for (let i = 0; i < contours.size(); ++i) {
+            let cnt = contours.get(i);
+            let rect = cv.boundingRect(cnt);
+            
+            // Filter out noise (only look for letter-sized shapes)
+            if (rect.width > 15 && rect.height > 15) {
+                let roi = thresh.roi(rect);
+                let lines = detectLines(roi);
+                let char = squareMap[lines.join(',')] || "?";
+                
+                found.push({ x: rect.x, char: char });
+                
+                // Draw a box around what the AI "sees"
+                cv.rectangle(src, new cv.Point(rect.x, rect.y), new cv.Point(rect.x+rect.width, rect.y+rect.height), [0, 255, 0, 255], 2);
+                roi.delete();
+            }
+        }
+
+        // 3. Sort left-to-right
+        found.sort((a, b) => a.x - b.x);
+        resultDiv.innerText = found.map(f => f.char).join("");
+        
+        // 4. Show the visual feedback
+        document.getElementById("canvasOutput").style.display = "block";
+        cv.imshow('canvasOutput', src);
+        status.innerText = "Done! Found " + found.length + " symbols.";
+
+        // Memory Cleanup
+        src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    };
+}
+
+function detectLines(roi) {
+    const w = roi.cols; const h = roi.rows;
+    const check = (r) => {
+        let zone = roi.roi(r);
+        let pixels = cv.countNonZero(zone);
+        zone.delete();
+        return pixels > (r.width * r.height * 0.25) ? 1 : 0; // 25% ink density
+    };
+    return [
+        check({x: 4, y: 0, width: w-8, height: 4}), // Top
+        check({x: w-4, y: 4, width: 4, height: h-8}), // Right
+        check({x: 4, y: h-4, width: w-8, height: 4}), // Bottom
+        check({x: 0, y: 4, width: 4, height: h-8})   // Left
+    ];
+}
+</script>
+</body>
+</html>
