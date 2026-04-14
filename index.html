@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 Symbol Translator Pro: Scale Invariant AI Fix</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; line-height: 1.6; max-width: 800px; margin: auto; background: #f4f4f4; color: #333; }
+        h1, h2 { text-align: center; color: #1a73e8; }
+        section { margin-bottom: 25px; padding: 20px; border-radius: 12px; background: #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        input, textarea { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; margin-top: 8px; }
+        button { padding: 10px 15px; cursor: pointer; background: #1a73e8; color: white; border: none; border-radius: 6px; font-weight: bold; width: 100%; margin-top: 10px; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #output, #decodedSymbols, #scanResult { margin-top: 15px; padding: 15px; border: 1px solid #eee; background: #fafafa; border-radius: 8px; word-wrap: break-word; }
+        .symbol { display: inline-block; margin: 3px; vertical-align: middle; }
+        #canvasOutput { width: 100%; border-radius: 8px; margin-top: 10px; display: none; border: 1px solid #1a73e8; }
+        #scanResult { font-size: 36px; color: #1e8e3e; font-weight: bold; text-align: center; letter-spacing: 3px; min-height: 50px; }
+        .status-badge { display: inline-block; padding: 5px 10px; border-radius: 15px; font-size: 12px; background: #eee; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <h1>🔐 Symbol Translator Pro</h1>
+
+    <section>
+        <h2>Step 1: Encode Message</h2>
+        <input type="text" id="inputText" placeholder="Type message..." oninput="encode()">
+        <div id="output"></div>
+        <textarea id="shareableCode" readonly rows="1"></textarea>
+    </section>
+
+    <section>
+        <h2>Step 2: Decode Message</h2>
+        <textarea id="inputCode" rows="1" placeholder="Paste scrambled code..." oninput="decode()"></textarea>
+        <div id="decodedSymbols"></div>
+        <div id="decodedOutput" style="font-weight:bold;color:#28a745;font-size:1.2em;text-align:center;margin-top:10px;"></div>
+    </section>
+
+    <section>
+        <h2>Step 3: AI Image Scan</h2>
+        <div id="status" class="status-badge">⏳ Loading AI Core...</div>
+        <button id="camBtn" disabled onclick="document.getElementById('fileInput').click()">📸 Upload Image</button>
+        <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="processImage(this)">
+        <canvas id="canvasOutput"></canvas>
+        <div id="scanResult"></div>
+    </section>
+
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
+
+    <script>
+        // Visual Rendering
+        function square(top, right, bottom, left, dot=false) {
+            let lines = "";
+            if (top) lines += `<line x1="5" y1="5" x2="35" y2="5"/>`;
+            if (right) lines += `<line x1="35" y1="5" x2="35" y2="35"/>`;
+            if (bottom) lines += `<line x1="5" y1="35" x2="35" y2="35"/>`;
+            if (left) lines += `<line x1="5" y1="5" x2="5" y2="35"/>`;
+            let dotSvg = dot ? `<circle cx="20" cy="20" r="3.5" fill="black"/>` : ""; 
+            return `<svg width="24" height="24" viewBox="0 0 40 40" stroke="black" stroke-width="3" fill="none">${lines}${dotSvg}</svg>`;
+        }
+
+        function triangle(type, dot=false) {
+            let lines = "";
+            if (type === "up") lines += `<line x1="20" y1="5" x2="5" y2="35"/><line x1="20" y1="5" x2="35" y2="35"/>`;
+            if (type === "right") lines += `<line x1="5" y1="5" x2="35" y2="20"/><line x1="5" y1="35" x2="35" y2="20"/>`;
+            if (type === "left") lines += `<line x1="35" y1="5" x2="5" y2="20"/><line x1="35" y1="35" x2="5" y2="20"/>`;
+            if (type === "down") lines += `<line x1="5" y1="5" x2="20" y2="35"/><line x1="35" y1="5" x2="20" y2="35"/>`;
+            let dotSvg = dot ? `<circle cx="20" cy="20" r="3.5" fill="black"/>` : ""; 
+            return `<svg width="24" height="24" viewBox="0 0 40 40" stroke="black" stroke-width="3" fill="none">${lines}${dotSvg}</svg>`;
+        }
+
+        const symbols = {
+            A: square(0,1,1,0), B: square(0,1,1,1), C: square(0,0,1,1), D: square(1,1,1,0), E: square(1,1,1,1), F: square(1,0,1,1), G: square(1,1,0,0), H: square(1,1,0,1), I: square(1,0,0,1),
+            J: triangle("down"), K: triangle("right"), L: triangle("left"), M: triangle("up"),
+            N: square(0,1,1,0,1), O: square(0,1,1,1,1), P: square(0,0,1,1,1), Q: square(1,1,1,0,1), R: square(1,1,1,1,1), S: square(1,0,1,1,1), T: square(1,1,0,0,1), U: square(1,1,0,1,1), V: square(1,0,0,1,1),
+            W: triangle("down", true), X: triangle("right", true), Y: triangle("left", true), Z: triangle("up", true)
+        };
+
+        const aiSymbolMap = {
+            "0,1,1,0,0": "A", "0,1,1,1,0": "B", "0,0,1,1,0": "C", "1,1,1,0,0": "D", "1,1,1,1,0": "E", "1,0,1,1,0": "F", "1,1,0,0,0": "G", "1,1,0,1,0": "H", "1,0,0,1,0": "I",
+            "tri_down,0": "J", "tri_right,0": "K", "tri_left,0": "L", "tri_up,0": "M",
+            "0,1,1,0,1": "N", "0,1,1,1,1": "O", "0,0,1,1,1": "P", "1,1,1,0,1": "Q", "1,1,1,1,1": "R", "1,0,1,1,1": "S", "1,1,0,0,1": "T", "1,1,0,1,1": "U", "1,0,0,1,1": "V",
+            "tri_down,1": "W", "tri_right,1": "X", "tri_left,1": "Y", "tri_up,1": "Z"
+        };
+
+        function renderVisualChar(char) {
+            if (symbols[char]) return `<span class="symbol">${symbols[char]}</span>`;
+            if (char === " ") return `<span class="symbol" style="width: 12px;"></span>`;
+            return `<span class="symbol" style="height:24px;width:24px;line-height:24px;text-align:center;font-size:16px;font-weight:bold;color:#555;">${char}</span>`;
+        }
+
+        function encode() {
+            let text = document.getElementById("inputText").value.toUpperCase();
+            let visual = ""; let code = "";
+            for (let char of text) { visual += renderVisualChar(char); code += char; }
+            document.getElementById("output").innerHTML = visual;
+            document.getElementById("shareableCode").value = btoa(encodeURIComponent(code));
+        }
+
+        function decode() {
+            try {
+                let decrypted = decodeURIComponent(atob(document.getElementById("inputCode").value)).toUpperCase();
+                let visual = "";
+                for (let char of decrypted) visual += renderVisualChar(char);
+                document.getElementById("decodedSymbols").innerHTML = visual;
+                document.getElementById("decodedOutput").innerText = decrypted;
+            } catch(e) { document.getElementById("decodedOutput").innerText = "Invalid format"; }
+        }
+
+        let checkCV = setInterval(() => {
+            if (typeof cv !== 'undefined' && cv.Mat) {
+                document.getElementById('status').innerText = "AI Ready ✅";
+                document.getElementById('camBtn').disabled = false;
+                clearInterval(checkCV);
+            }
+        }, 1000);
+
+        function processImage(input) {
+            if (!input.files[0]) return;
+            const img = new Image();
+            img.src = URL.createObjectURL(input.files[0]);
+            img.onload = function() {
+                let src = cv.imread(img);
+                
+                let gray = new cv.Mat(), thresh = new cv.Mat();
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(gray, gray, new cv.Size(3, 3), 0, 0, cv.BORDER_DEFAULT);
+                cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 7);
+                
+                let contours = new cv.MatVector(), hierarchy = new cv.Mat();
+                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                let found = [];
+                let heights = [];
+                for (let i = 0; i < contours.size(); ++i) {
+                    let rect = cv.boundingRect(contours.get(i));
+                    if (rect.width > 8 && rect.height > 8 && rect.width < 250 && rect.height < 250) {
+                        found.push(rect);
+                        heights.push(rect.height);
+                    }
+                }
+
+                if (found.length === 0) {
+                    document.getElementById("scanResult").innerText = "No symbols found.";
+                    src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+                    return;
+                }
+
+                heights.sort((a,b)=>a-b);
+                const medianHeight = heights[Math.floor(heights.length / 2)];
+                const lineThresh = medianHeight * 0.7; 
+
+                // Sort symbols into Lines
+                found.sort((a, b) => a.y - b.y);
+                let lines = [];
+                if (found.length > 0) {
+                    let currentLine = [found[0]];
+                    for (let i = 1; i < found.length; i++) {
+                        if (Math.abs(found[i].y - currentLine[0].y) < lineThresh) {
+                            currentLine.push(found[i]);
+                        } else {
+                            currentLine.sort((a, b) => a.x - b.x);
+                            lines.push(currentLine);
+                            currentLine = [found[i]];
+                        }
+                    }
+                    currentLine.sort((a, b) => a.x - b.x);
+                    lines.push(currentLine);
+                }
+
+                // Global character gap analysis to determine word breaks
+                let allGaps = [];
+                lines.forEach(line => {
+                    for (let i = 0; i < line.length - 1; i++) {
+                        allGaps.push(line[i+1].x - (line[i].x + line[i].width));
+                    }
+                });
+                allGaps.sort((a, b) => a - b);
+                const medianGap = allGaps.length > 0 ? allGaps[Math.floor(allGaps.length * 0.5)] : 5;
+                const wordBreakThresh = Math.max(medianGap * 2.2, medianHeight * 0.2);
+
+                let result = "";
+                for (let l = 0; l < lines.length; l++) {
+                    let line = lines[l];
+                    for (let i = 0; i < line.length; i++) {
+                        let rect = line[i];
+                        let roi = thresh.roi(rect);
+                        let resizedRoi = new cv.Mat();
+                        cv.resize(roi, resizedRoi, new cv.Size(100, 100));
+                        
+                        let charKey = analyzeRobustProportional(resizedRoi);
+                        result += aiSymbolMap[charKey] || ""; 
+                        
+                        // Check for space between words on the SAME line
+                        if (i < line.length - 1) {
+                            let gap = line[i+1].x - (rect.x + rect.width);
+                            if (gap > wordBreakThresh) {
+                                result += " ";
+                            }
+                        }
+                        roi.delete();
+                        resizedRoi.delete();
+                    }
+
+                    // Handle potential space at the end of a line (Wrap check)
+                    if (l < lines.length - 1) {
+                        let currentLineLast = line[line.length - 1];
+                        let nextLineFirst = lines[l+1][0];
+                        
+                        // If the next line starts further right than the "standard" start, it's a new word/paragraph
+                        let indent = nextLineFirst.x - lines[0][0].x;
+                        if (indent > medianHeight * 0.5) {
+                            result += " ";
+                        } else {
+                            // If the previous line didn't end near the "max width" or is logically a separate thought
+                            // We use a heuristic: unless it's very clearly a wrap, assume a word break
+                            result += " ";
+                        }
+                    }
+                }
+                
+                // Final sanitize: No double spaces
+                document.getElementById("scanResult").innerText = result.replace(/\s+/g, ' ').trim();
+                cv.imshow('canvasOutput', thresh);
+                document.getElementById("canvasOutput").style.display = "block";
+                src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+            };
+        }
+
+        function analyzeRobustProportional(m) {
+            const countRange = (yS, yE, xS, xE) => cv.countNonZero(m.roi({x: xS, y: yS, width: xE-xS, height: yE-yS}));
+            const totalDensity = countRange(0, 100, 0, 100) / 100;
+
+            let tlS = countRange(5, 15, 5, 15);
+            let trS = countRange(5, 15, 85, 95);
+            let blS = countRange(85, 95, 5, 15);
+            let brS = countRange(85, 95, 85, 95);
+
+            let dotDensityThresh = Math.max(150, totalDensity * 1.5);
+            let dot = countRange(35, 65, 35, 65) > dotDensityThresh ? 1 : 0;
+
+            let angleEmptyThresh = 40; 
+            if (tlS < angleEmptyThresh && trS < angleEmptyThresh && countRange(80, 100, 0, 100) > 400) return `tri_up,${dot}`;
+            if (blS < angleEmptyThresh && brS < angleEmptyThresh && countRange(0, 20, 0, 100) > 400) return `tri_down,${dot}`;
+            if (tlS < angleEmptyThresh && blS < angleEmptyThresh && countRange(0, 100, 80, 100) > 400) return `tri_left,${dot}`;
+            if (trS < angleEmptyThresh && brS < angleEmptyThresh && countRange(0, 100, 0, 20) > 400) return `tri_right,${dot}`;
+
+            let lineThresh = Math.max(130, totalDensity * 2); 
+            let t = countRange(5, 25, 20, 80) > lineThresh ? 1 : 0;
+            let r = countRange(20, 80, 75, 95) > lineThresh ? 1 : 0;
+            let b = countRange(75, 95, 20, 80) > lineThresh ? 1 : 0;
+            let l = countRange(20, 80, 5, 25) > lineThresh ? 1 : 0;
+
+            return `${t},${r},${b},${l},${dot}`;
+        }
+    </script>
+</body>
+</html>
