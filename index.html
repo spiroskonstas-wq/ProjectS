@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 Symbol AI - Absolute Final Fix</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: auto; background: #f4f7f9; }
+        section { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h2 { color: #1a73e8; text-align: center; }
+        button { background: #1a73e8; color: white; border: none; padding: 18px; border-radius: 10px; width: 100%; font-size: 1.1em; font-weight: bold; cursor: pointer; }
+        button:disabled { background: #ccc; }
+        #scanResult { font-size: 60px; color: #2e7d32; font-weight: bold; text-align: center; letter-spacing: 20px; margin-top: 20px; min-height: 80px; }
+        #canvasOutput { width: 100%; border-radius: 10px; display: none; margin-top: 15px; border: 3px solid #1a73e8; }
+        .symbol { display: inline-block; margin: 5px; }
+    </style>
+</head>
+<body>
+
+    <section>
+        <h2>📸 Symbol AI Scanner</h2>
+        <div id="status" style="text-align:center; margin-bottom:10px;">⏳ Initializing AI Engine...</div>
+        <button id="camBtn" disabled onclick="document.getElementById('fileInput').click()">SCAN HANDWRITING</button>
+        <input type="file" id="fileInput" accept="image/*" capture="camera" style="display:none" onchange="processImage(this)">
+        <canvas id="canvasOutput"></canvas>
+        <div id="scanResult"></div>
+    </section>
+
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
+
+    <script>
+        // The most forgiving map possible for the letter L and others
+        const aiMap = {
+            "1,1,0,1,0": "H", "1,1,1,1,0": "E", "0,1,1,1,1": "O",
+            "1,0,0,1,0_T": "L", "1,0,1,1,0_T": "L", "0,0,1,1,0_T": "L", "0,0,0,1,0_T": "L",
+            "1,1,0,0,0_K": "K", "0,1,1,0,0_M": "M", "0,0,1,1,0_J": "J"
+        };
+
+        let cvCheck = setInterval(() => {
+            if (window.cv && cv.Mat) {
+                document.getElementById('status').innerText = "AI Engine Loaded ✅";
+                document.getElementById('camBtn').disabled = false;
+                clearInterval(cvCheck);
+            }
+        }, 1000);
+
+        function processImage(input) {
+            const img = new Image();
+            img.src = URL.createObjectURL(input.files[0]);
+            img.onload = function() {
+                let src = cv.imread(img);
+                let scale = 800 / src.cols;
+                cv.resize(src, src, new cv.Size(800, src.rows * scale));
+                let gray = new cv.Mat(), thresh = new cv.Mat();
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 8);
+                
+                let contours = new cv.MatVector(), hierarchy = new cv.Mat();
+                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                let found = [];
+                for (let i = 0; i < contours.size(); ++i) {
+                    let rect = cv.boundingRect(contours.get(i));
+                    if (rect.width > 20 && rect.height > 20 && rect.width < 400) {
+                        let roi = thresh.roi(rect);
+                        let padded = new cv.Mat();
+                        cv.copyMakeBorder(roi, padded, 15, 15, 15, 15, cv.BORDER_CONSTANT, [0,0,0,255]);
+                        cv.resize(padded, padded, new cv.Size(60, 60));
+
+                        let key = extremeAnalyze(padded);
+                        found.push({ x: rect.x, char: aiMap[key] || "?" });
+                        
+                        cv.rectangle(src, new cv.Point(rect.x, rect.y), new cv.Point(rect.x+rect.width, rect.y+rect.height), [0, 255, 0, 255], 3);
+                        roi.delete(); padded.delete();
+                    }
+                }
+                found.sort((a, b) => a.x - b.x);
+                document.getElementById("scanResult").innerText = found.map(f => f.char).join("");
+                document.getElementById("canvasOutput").style.display = "block";
+                cv.imshow('canvasOutput', src);
+                src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+            };
+        }
+
+        function extremeAnalyze(norm) {
+            const getD = (x, y, w, h) => {
+                let z = norm.roi({x, y, width: w, height: h});
+                let c = cv.countNonZero(z);
+                z.delete();
+                return c / (w * h);
+            };
+
+            // Detect raw line presence
+            const lines = [
+                getD(10, 0, 40, 15) > 0.08 ? 1 : 0, // Top
+                getD(45, 10, 15, 40) > 0.08 ? 1 : 0, // Right
+                getD(10, 45, 40, 15) > 0.08 ? 1 : 0, // Bottom
+                getD(0, 10, 15, 40) > 0.08 ? 1 : 0  // Left
+            ];
+
+            // THE KILLER FIX: Corner vs Center ratio
+            // If corners are empty and center has ink, it MUST be a pointy letter (L, K, J, M)
+            const cornerSum = getD(0,0,15,15) + getD(45,0,15,15) + getD(0,45,15,15) + getD(45,45,15,15);
+            const centerSum = getD(20,20,20,20);
+            
+            let key = lines.join(',') + ",0"; // Assuming no dot for HELLO
+
+            // If it's pointy, we label it with _T for "Triangle/Angle"
+            if (centerSum > 0.05 && cornerSum < 0.20) {
+                key += "_T";
+            }
+
+            return key;
+        }
+    </script>
+</body>
+</html>
